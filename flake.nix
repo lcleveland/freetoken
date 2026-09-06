@@ -18,19 +18,35 @@
       # flake's own outputs are always built against a CUDA-enabled nixpkgs.
       # Consumers that already build their system with `cudaSupport` can skip
       # this and use `overlays.default` on their own nixpkgs instead.
-      pkgsFor =
-        system:
+      #
+      # `cudaSupport` alone would mean compiling torch from source, which hydra
+      # cannot cache and which takes hours, so the default outputs also take
+      # `overlays.binary-torch`: upstream's cu130 wheel instead of that build.
+      mkPkgs =
+        {
+          system,
+          binaryTorch ? true,
+        }:
         import nixpkgs {
           inherit system;
           config = {
             allowUnfree = true;
             cudaSupport = true;
           };
-          overlays = [ self.overlays.default ];
+          overlays = lib.optional binaryTorch self.overlays.binary-torch ++ [ self.overlays.default ];
         };
+
+      pkgsFor = system: mkPkgs { inherit system; };
     in
     {
-      overlays.default = import ./overlay.nix;
+      overlays = {
+        default = import ./overlay.nix;
+
+        # Opt-in, and invasive: it replaces `pkgs.python3` and `pkgs.cudaPackages`
+        # for the whole nixpkgs it is applied to. This flake's own packages are
+        # built with it; apply it yourself only if that is what you want.
+        binary-torch = import ./overlays/binary-torch.nix;
+      };
 
       packages = forAllSystems (
         system:
@@ -43,9 +59,18 @@
           # `ft` wrapped with the CUDA toolchain it needs for runtime kernel JIT.
           freetoken = pkgs.freetoken;
 
-          # The same thing without flashinfer's fused kernels: a far smaller
-          # build that falls back to the pure-Triton attention backend.
+          # The same thing without flashinfer's fused kernels: falls back to the
+          # pure-Triton attention backend.
           freetoken-triton = pkgs.freetoken.override { withAccel = false; };
+
+          # Built against nixpkgs' from-source torch instead of upstream's
+          # wheel. Hours of compiling unless your substituters already have it,
+          # but it is the same torch the rest of your nixpkgs uses.
+          freetoken-source =
+            (mkPkgs {
+              inherit system;
+              binaryTorch = false;
+            }).freetoken;
 
           # The GUI control panel, pointed at the `ft` above.
           freetoken-desktop = pkgs.freetoken-desktop;

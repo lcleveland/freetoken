@@ -20,9 +20,9 @@ and its engine pointed at the Nix `ft` — see [Desktop GUI](#desktop-gui).
   r580+ for CUDA 13, though this flake builds against whichever CUDA version
   nixpkgs' torch uses).
 - Unfree packages allowed — CUDA, and the CuteDSL runtime `flashlib` pulls in.
-- Disk and patience the first time: with `cudaSupport`, torch and friends are
-  built from source unless you point Nix at a cache that has them (see
-  [Build cost](#build-cost)).
+- Disk, and some patience the first time — but no torch compile: the default
+  build takes PyTorch's own cu130 wheel rather than nixpkgs' from-source torch
+  (see [Build cost](#build-cost)).
 
 ## Try it
 
@@ -200,6 +200,11 @@ If you already build your system with `nixpkgs.config.cudaSupport = true`:
 }
 ```
 
+`overlays.default` leaves torch alone, so on a `cudaSupport` nixpkgs it builds
+against your from-source torch. `overlays.binary-torch` is the wheel swap
+described under [Build cost](#build-cost); it is opt-in because it replaces
+`pkgs.python3` and `pkgs.cudaPackages` for the whole nixpkgs you apply it to.
+
 The overlay adds `pkgs.freetoken` (the wrapped CLI) and `pkgs.freetoken-desktop`
 (the GUI, already pointed at `pkgs.freetoken`), plus
 `pkgs.python3Packages.freetoken` and `pkgs.python3Packages.flashlib` — the one
@@ -210,7 +215,8 @@ dependency nixpkgs does not carry — for composing your own Python environment.
 | Output | What it is |
 |---|---|
 | `packages.x86_64-linux.freetoken` | `ft`, wrapped with a CUDA toolchain for runtime JIT. The default. |
-| `packages.x86_64-linux.freetoken-triton` | The same without flashinfer; far smaller, falls back to the pure-Triton attention backend. |
+| `packages.x86_64-linux.freetoken-triton` | The same without flashinfer; falls back to the pure-Triton attention backend. |
+| `packages.x86_64-linux.freetoken-source` | Built against nixpkgs' from-source torch instead of the wheel. Hours of compiling. |
 | `packages.x86_64-linux.freetoken-desktop` | The GUI, wired to the `ft` above. Unfree, prebuilt binary. |
 | `packages.x86_64-linux.python3Packages-freetoken` | The bare Python package. |
 | `packages.x86_64-linux.python3Packages-flashlib` | flashlib 0.3.0, FreeToken's expert-cache kernel library. |
@@ -232,9 +238,28 @@ dependency nixpkgs does not carry — for composing your own Python environment.
 
 ## Build cost
 
-`cudaSupport = true` puts you off the `cache.nixos.org` binary path for torch and
-everything downstream of it. Add the community CUDA cache before your first
-build:
+`nixpkgs.config.cudaSupport = true` puts you off the `cache.nixos.org` binary
+path for torch and everything downstream, and torch from source is a multi-hour
+build that hydra cannot cache. Importing this flake should not cost you that, so
+the default packages avoid it in two places:
+
+- **torch** comes from `torch-bin`, PyTorch's own cu130 wheel: a download plus
+  `autoPatchelf`, not a compile. `triton-bin` comes with it.
+- **flashinfer** is built in JIT mode rather than AOT. AOT compiles every kernel
+  ahead of time — the other multi-hour build in this closure — while JIT
+  installs in seconds and compiles what it actually needs on first use, using
+  the CUDA toolkit the `ft` wrapper already puts on `PATH`. You pay for it once,
+  in the first request after an upgrade, into `cacheDir`.
+
+That is `overlays.binary-torch`, and it brings CUDA 13 with it: the wheel is the
+cu130 build, nixpkgs' `torch-bin` refuses to evaluate against a `cuda-bindings`
+older than 13.0.3, and FreeToken's `setup.py` refuses to build its extensions
+with an `nvcc` whose major does not match torch's.
+
+What is left to build on a cold store is real but bounded: the CUDA
+redistributables unpack locally (cuDNN and cuBLAS are multi-gigabyte tarballs),
+NCCL compiles, `cuda-bindings` compiles, and FreeToken's own two C++ extensions
+compile in seconds. Adding the community CUDA cache helps with the first two:
 
 ```nix
 nix.settings = {
@@ -245,8 +270,10 @@ nix.settings = {
 };
 ```
 
-`freetoken-triton` (no flashinfer) is much cheaper if you can live with the
-Triton attention backend.
+`freetoken-triton` drops flashinfer entirely if you can live with the Triton
+attention backend. `freetoken-source` is the other direction: nixpkgs'
+from-source torch, which is hours of compiling but shares the torch the rest of
+your system already builds.
 
 ## Updating to a new FreeToken release
 
