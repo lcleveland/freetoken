@@ -1,0 +1,29 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: nix flake check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: cachix/install-nix-action@v31
+        with:
+          extra_nix_config: |
+            experimental-features = nix-command flakes
+            extra-substituters = https://cuda-maintainers.cachix.org
+            extra-trusted-public-keys = cuda-maintainers.cachix.org-1:0dq3bujKpuEPMCX6U4WylrUDZ9JyUG0VpVZa7CNfq5E=
+
+      # Evaluates every output and runs the module checks. The CUDA build itself
+      # is far too large for a GitHub runner, so it is only instantiated.
+      - run: nix flake check -L
+
+      - run: nix build --dry-run .#freetoken .#freetoken-triton
+
+      - run: nix fmt -- --ci
