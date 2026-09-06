@@ -151,6 +151,11 @@ live cache/VRAM tuning.
 }
 ```
 
+`nixosModules.desktop` stands on its own — a workstation that only runs the GUI
+does not need the server module. Imported that way it takes its engine from this
+flake's `ft`; with the bare `modules/desktop.nix` and the overlay it takes
+`pkgs.freetoken`.
+
 That installs the app system-wide with its `.desktop` entry and hicolor icons,
 so it appears in application launchers (GNOME, KDE, rofi, …) as **FreeToken
 Desktop** — upstream's own entry ships an empty `Categories=`, which leaves it
@@ -161,7 +166,7 @@ unfiled in most launchers, so this package writes its own. From a terminal it is
 |---|---|---|
 | `programs.freetoken-desktop.enable` | `false` | Install the GUI and its launcher entry. |
 | `programs.freetoken-desktop.package` | this flake's build | The app package. |
-| `programs.freetoken-desktop.engine` | `services.freetoken.package` | The `ft` the GUI drives, as `FREETOKEN_FT_BIN`. |
+| `programs.freetoken-desktop.engine` | the configured server package, else `pkgs.freetoken` | The `ft` the GUI drives, as `FREETOKEN_FT_BIN`. |
 | `programs.freetoken-desktop.modelsDir` | `null` | Model library directory (`FREETOKEN_MODELS_DIR`). |
 | `programs.freetoken-desktop.environment` | `{ }` | Extra environment baked into the app's wrapper. |
 

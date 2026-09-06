@@ -79,13 +79,16 @@
           };
 
         # The GUI on its own, for a workstation that only drives an engine.
+        # `services.freetoken` is not imported here, so the engine default that
+        # the module would otherwise take from it is supplied directly.
         desktop =
           { pkgs, ... }:
           {
             imports = [ ./modules/desktop.nix ];
-            programs.freetoken-desktop.package =
-              lib.mkDefault
-                self.packages.${pkgs.stdenv.hostPlatform.system}.freetoken-desktop;
+            programs.freetoken-desktop = {
+              package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.freetoken-desktop;
+              engine = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.freetoken;
+            };
           };
       };
 
@@ -229,6 +232,88 @@
             pkgs.runCommand "freetoken-desktop-module-eval" { } ''
               grep -qF -- "engine=${lib.getExe stubPackage}" ${lib.getExe installed} \
                 || { echo "the GUI was not wired to the configured engine"; exit 1; }
+              touch $out
+            '';
+
+          # The GUI module must stand on its own: it is imported without the
+          # server module, whose options it must therefore not reach into --
+          # including for the `engine` default, which is left unset here on
+          # purpose so that default is what gets evaluated.
+          desktop-module-standalone =
+            let
+              stubEngine = pkgs.writeShellScriptBin "ft" "exit 1";
+              # Same shape as the real package: takes a `freetoken` argument, so
+              # the module's override path is what gets exercised.
+              stubDesktop = pkgs.callPackage (
+                { writeShellScriptBin, freetoken }:
+                writeShellScriptBin "freetoken-desktop" ''
+                  echo engine=${lib.getExe freetoken}
+                ''
+              ) { freetoken = pkgs.writeShellScriptBin "ft" "exit 1"; };
+
+              config =
+                (lib.nixosSystem {
+                  inherit system;
+                  modules = [
+                    ./modules/desktop.nix
+                    {
+                      # Stand in for the overlay the module falls back on when
+                      # services.freetoken is not in scope.
+                      nixpkgs.pkgs = pkgs.extend (_: _: { freetoken = stubEngine; });
+                      programs.freetoken-desktop = {
+                        enable = true;
+                        package = stubDesktop;
+                      };
+                      boot.loader.grub.enable = false;
+                      fileSystems."/" = {
+                        device = "none";
+                        fsType = "tmpfs";
+                      };
+                      system.stateVersion = lib.trivial.release;
+                    }
+                  ];
+                }).config;
+
+              broken = failedAssertions config;
+              installed = lib.findFirst (
+                p: lib.hasInfix "freetoken-desktop" (p.name or "")
+              ) null config.environment.systemPackages;
+
+              # The flake's own `nixosModules.desktop` must supply an engine
+              # without the server module too. Only its type is checked, so the
+              # real (very large) package is evaluated but never built.
+              flakeEngine =
+                (lib.nixosSystem {
+                  inherit system;
+                  modules = [
+                    self.nixosModules.desktop
+                    {
+                      programs.freetoken-desktop = {
+                        enable = true;
+                        package = stubDesktop;
+                      };
+                      boot.loader.grub.enable = false;
+                      fileSystems."/" = {
+                        device = "none";
+                        fsType = "tmpfs";
+                      };
+                      system.stateVersion = lib.trivial.release;
+                    }
+                  ];
+                }).config.programs.freetoken-desktop.engine;
+            in
+            assert broken == [ ] || throw "unexpected assertion failures: ${lib.concatStringsSep "; " broken}";
+            assert installed != null || throw "the GUI was not added to environment.systemPackages";
+            # Forces the warnings, which also used to read services.freetoken.
+            assert
+              config.warnings == [ ]
+              || throw "unexpected warnings without the server module: ${lib.concatStringsSep "; " config.warnings}";
+            assert
+              lib.isDerivation flakeEngine
+              || throw "nixosModules.desktop left programs.freetoken-desktop.engine unusable";
+            pkgs.runCommand "freetoken-desktop-module-standalone" { } ''
+              grep -qF -- "engine=${lib.getExe stubEngine}" ${lib.getExe installed} \
+                || { echo "the engine default did not resolve to pkgs.freetoken"; exit 1; }
               touch $out
             '';
 

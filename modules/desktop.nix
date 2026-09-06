@@ -9,12 +9,26 @@
 let
   cfg = config.programs.freetoken-desktop;
 
+  # This module stands alone: `nixosModules.desktop` imports it without the
+  # server module, so nothing below may assume `services.freetoken` is even a
+  # declared option.
+  server = config.services.freetoken or { };
+
   envVars =
     lib.optionalAttrs (cfg.modelsDir != null) { FREETOKEN_MODELS_DIR = cfg.modelsDir; }
     // cfg.environment;
 
   withEngine =
-    if cfg.engine == null then cfg.package else cfg.package.override { freetoken = cfg.engine; };
+    if cfg.engine == null then
+      cfg.package
+    else if cfg.package ? override then
+      cfg.package.override { freetoken = cfg.engine; }
+    else
+      throw (
+        "programs.freetoken-desktop.package takes no `freetoken` argument to override, so the "
+        + "engine cannot be wired into it. Set programs.freetoken-desktop.engine = null and put "
+        + "FREETOKEN_FT_BIN into the app's environment yourself."
+      );
 
   # Bake the settings into the app's own wrapper rather than the login session,
   # so they apply however it is started and need no re-login.
@@ -47,8 +61,16 @@ in
 
     engine = lib.mkOption {
       type = lib.types.nullOr lib.types.package;
-      default = config.services.freetoken.package;
-      defaultText = lib.literalExpression "config.services.freetoken.package";
+      default =
+        server.package or pkgs.freetoken or (throw (
+          "programs.freetoken-desktop.engine has no default to fall back on: neither the "
+          + "services.freetoken module nor this flake's overlay is in scope. Set it to the "
+          + "`ft` package to drive, or to null to leave the app on its bundled installer."
+        ));
+      defaultText = lib.literalExpression ''
+        config.services.freetoken.package, or pkgs.freetoken when
+        the server module is not imported
+      '';
       description = ''
         The `ft` package the GUI drives, wired in as `FREETOKEN_FT_BIN`.
 
@@ -96,11 +118,7 @@ in
 
     warnings =
       lib.optional
-        (
-          config.services.freetoken.enable
-          && config.services.freetoken.port == 1919
-          && config.services.freetoken.host == "127.0.0.1"
-        )
+        ((server.enable or false) && (server.port or null) == 1919 && (server.host or null) == "127.0.0.1")
         ''
           Both services.freetoken and programs.freetoken-desktop are enabled. The GUI
           starts and stops its own `ft serve` on port 1919, which is the port the
