@@ -1,6 +1,18 @@
 {
   description = "Nix package and NixOS module for FreeToken, the edge-native MoE serving engine";
 
+  # Without this, `nix build`/`nix run` against this flake compiles torch and
+  # flashinfer from source: cache.nixos.org carries no unfree CUDA. The NixOS
+  # modules configure the same cache through
+  # `services.freetoken.binaryCache`, which is what a `nixos-rebuild` needs --
+  # nixConfig only reaches direct `nix` invocations, and only for trusted users.
+  nixConfig = {
+    extra-substituters = [ "https://cache.nixos-cuda.org" ];
+    extra-trusted-public-keys = [
+      "cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M="
+    ];
+  };
+
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixpkgs-unstable";
   };
@@ -19,13 +31,14 @@
       # Consumers that already build their system with `cudaSupport` can skip
       # this and use `overlays.default` on their own nixpkgs instead.
       #
-      # `cudaSupport` alone would mean compiling torch from source, which hydra
-      # cannot cache and which takes hours, so the default outputs also take
-      # `overlays.binary-torch`: upstream's cu130 wheel instead of that build.
+      # This is deliberately nixpkgs' stock CUDA stack -- from-source torch at
+      # the default CUDA version -- because that is exactly what
+      # cache.nixos-cuda.org has already built. Anything else (a newer CUDA, or
+      # torch's own wheel) is a cache miss and means building it yourself.
       mkPkgs =
         {
           system,
-          binaryTorch ? true,
+          binaryTorch ? false,
         }:
         import nixpkgs {
           inherit system;
@@ -42,9 +55,11 @@
       overlays = {
         default = import ./overlay.nix;
 
-        # Opt-in, and invasive: it replaces `pkgs.python3` and `pkgs.cudaPackages`
-        # for the whole nixpkgs it is applied to. This flake's own packages are
-        # built with it; apply it yourself only if that is what you want.
+        # Opt-in, and rarely what you want: it swaps in torch's own cu130 wheel
+        # and CUDA 13, which no public cache carries, so it trades an hour of
+        # NCCL and flashinfer builds for a torch download. Only worth it if you
+        # cannot use cache.nixos-cuda.org. It is also invasive -- it replaces
+        # `pkgs.python3` and `pkgs.cudaPackages` wholesale.
         binary-torch = import ./overlays/binary-torch.nix;
       };
 
@@ -63,13 +78,12 @@
           # pure-Triton attention backend.
           freetoken-triton = pkgs.freetoken.override { withAccel = false; };
 
-          # Built against nixpkgs' from-source torch instead of upstream's
-          # wheel. Hours of compiling unless your substituters already have it,
-          # but it is the same torch the rest of your nixpkgs uses.
-          freetoken-source =
+          # Built against torch's own wheel and CUDA 13 rather than nixpkgs'
+          # cached stack. See `overlays.binary-torch` for when that is worth it.
+          freetoken-wheel =
             (mkPkgs {
               inherit system;
-              binaryTorch = false;
+              binaryTorch = true;
             }).freetoken;
 
           # The GUI control panel, pointed at the `ft` above.
@@ -92,6 +106,7 @@
             imports = [
               ./modules/freetoken.nix
               ./modules/desktop.nix
+              ./modules/binary-cache.nix
             ];
             # Default to this flake's CUDA-enabled builds, so importing the module
             # is enough — no overlay and no system-wide `cudaSupport` needed.
@@ -109,7 +124,10 @@
         desktop =
           { pkgs, ... }:
           {
-            imports = [ ./modules/desktop.nix ];
+            imports = [
+              ./modules/desktop.nix
+              ./modules/binary-cache.nix
+            ];
             programs.freetoken-desktop = {
               package = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.freetoken-desktop;
               engine = lib.mkDefault self.packages.${pkgs.stdenv.hostPlatform.system}.freetoken;
@@ -259,6 +277,37 @@
                 || { echo "the GUI was not wired to the configured engine"; exit 1; }
               touch $out
             '';
+
+          # The cache is the whole difference between "downloads" and "compiles
+          # torch", so check the modules actually configure it.
+          binary-cache-module =
+            let
+              cache = import ./cache.nix;
+              config = evalModule {
+                services.freetoken = {
+                  enable = true;
+                  model = "some/model";
+                };
+              };
+              settings = config.nix.settings;
+            in
+            assert
+              builtins.elem cache.url settings.extra-substituters
+              || throw "the CUDA cache is not in extra-substituters";
+            assert
+              builtins.elem cache.publicKey settings.extra-trusted-public-keys
+              || throw "the CUDA cache key is not trusted, so nix would refuse everything it serves";
+            # And it must be possible to turn off: it is a third party.
+            assert
+              (evalModule {
+                services.freetoken = {
+                  enable = true;
+                  model = "some/model";
+                  binaryCache.enable = false;
+                };
+              }).nix.settings.extra-substituters or [ ] == [ ]
+              || throw "binaryCache.enable = false did not remove the substituter";
+            pkgs.runCommand "freetoken-binary-cache-module" { } "touch $out";
 
           # The GUI module must stand on its own: it is imported without the
           # server module, whose options it must therefore not reach into --
