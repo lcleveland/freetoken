@@ -47,6 +47,11 @@
                 };
               };
 
+              # The GUI, in your application launcher as "FreeToken Desktop".
+              # It drives its own `ft serve`, so leave services.freetoken off
+              # (or move it off port 1919) if you enable this.
+              # programs.freetoken-desktop.enable = true;
+
               # Reach the API from the LAN. The API is unauthenticated, so only
               # do this on a network you trust, or put a proxy in front of it.
               # services.freetoken.host = "0.0.0.0";

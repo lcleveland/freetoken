@@ -47,6 +47,9 @@
           # build that falls back to the pure-Triton attention backend.
           freetoken-triton = pkgs.freetoken.override { withAccel = false; };
 
+          # The GUI control panel, pointed at the `ft` above.
+          freetoken-desktop = pkgs.freetoken-desktop;
+
           # The bare python packages, for composing your own environment.
           python3Packages-freetoken = pkgs.python3Packages.freetoken;
           python3Packages-flashlib = pkgs.python3Packages.flashlib;
@@ -56,15 +59,33 @@
       nixosModules = {
         default = self.nixosModules.freetoken;
 
+        # Everything: `services.freetoken` (the server) and
+        # `programs.freetoken-desktop` (the GUI).
         freetoken =
           { pkgs, ... }:
           {
-            imports = [ ./modules/freetoken.nix ];
-            # Default to this flake's CUDA-enabled build, so importing the module
+            imports = [
+              ./modules/freetoken.nix
+              ./modules/desktop.nix
+            ];
+            # Default to this flake's CUDA-enabled builds, so importing the module
             # is enough — no overlay and no system-wide `cudaSupport` needed.
             services.freetoken.package =
               lib.mkDefault
                 self.packages.${pkgs.stdenv.hostPlatform.system}.freetoken;
+            programs.freetoken-desktop.package =
+              lib.mkDefault
+                self.packages.${pkgs.stdenv.hostPlatform.system}.freetoken-desktop;
+          };
+
+        # The GUI on its own, for a workstation that only drives an engine.
+        desktop =
+          { pkgs, ... }:
+          {
+            imports = [ ./modules/desktop.nix ];
+            programs.freetoken-desktop.package =
+              lib.mkDefault
+                self.packages.${pkgs.stdenv.hostPlatform.system}.freetoken-desktop;
           };
       };
 
@@ -168,6 +189,48 @@
             in
             assert lib.any (lib.hasInfix "`host`") broken || throw "settings.host was not rejected";
             pkgs.runCommand "freetoken-module-rejects-reserved-flags" { } "touch $out";
+
+          # The GUI must land in systemPackages with its launcher entry, and be
+          # pointed at the configured engine rather than its own installer.
+          desktop-module-eval =
+            let
+              # A stub that takes the same `freetoken` argument the real package
+              # does, so the module's override path is exercised.
+              stubDesktop = pkgs.callPackage (
+                { writeShellScriptBin, freetoken }:
+                writeShellScriptBin "freetoken-desktop" ''
+                  echo engine=${lib.getExe freetoken}
+                ''
+              ) { freetoken = pkgs.writeShellScriptBin "ft" "exit 1"; };
+
+              config = evalModule {
+                programs.freetoken-desktop = {
+                  enable = true;
+                  package = stubDesktop;
+                  modelsDir = "/srv/models";
+                };
+                services.freetoken = {
+                  enable = true;
+                  model = "/srv/models/Qwen3.6-35B-A3B";
+                };
+              };
+
+              broken = failedAssertions config;
+              installed = lib.findFirst (
+                p: lib.hasInfix "freetoken-desktop" (p.name or "")
+              ) null config.environment.systemPackages;
+            in
+            assert broken == [ ] || throw "unexpected assertion failures: ${lib.concatStringsSep "; " broken}";
+            assert installed != null || throw "the GUI was not added to environment.systemPackages";
+            # Enabling both means two things racing for port 1919; say so.
+            assert
+              lib.any (lib.hasInfix "port 1919") config.warnings
+              || throw "no warning about the engine port collision";
+            pkgs.runCommand "freetoken-desktop-module-eval" { } ''
+              grep -qF -- "engine=${lib.getExe stubPackage}" ${lib.getExe installed} \
+                || { echo "the GUI was not wired to the configured engine"; exit 1; }
+              touch $out
+            '';
 
           # A missing model must fail the build with the assertion, not with an
           # eval error somewhere inside the unit.

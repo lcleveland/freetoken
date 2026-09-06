@@ -10,6 +10,9 @@ builds FreeToken from source against nixpkgs' own torch/CUDA stack, wraps `ft`
 with the CUDA toolchain it needs to JIT kernels at run time, and adds a
 `services.freetoken` module that runs `ft serve` as a hardened systemd service.
 
+It also packages **FreeToken Desktop**, the GUI, with a proper launcher entry
+and its engine pointed at the Nix `ft` — see [Desktop GUI](#desktop-gui).
+
 ## Requirements
 
 - `x86_64-linux` with an NVIDIA GPU and the proprietary driver loaded
@@ -136,6 +139,51 @@ Triton, numba and torch's extension loader all generate code at run time, and
 `ProtectHome=` is `read-only` when the model path is under `/home`, and `true`
 otherwise.
 
+## Desktop GUI
+
+FreeToken Desktop is the GUI: model library, chat console, engine start/stop and
+live cache/VRAM tuning.
+
+```nix
+{
+  # nixosModules.freetoken carries this too; nixosModules.desktop is the GUI alone.
+  programs.freetoken-desktop.enable = true;
+}
+```
+
+That installs the app system-wide with its `.desktop` entry and hicolor icons,
+so it appears in application launchers (GNOME, KDE, rofi, …) as **FreeToken
+Desktop** — upstream's own entry ships an empty `Categories=`, which leaves it
+unfiled in most launchers, so this package writes its own. From a terminal it is
+`freetoken-desktop`.
+
+| Option | Default | Meaning |
+|---|---|---|
+| `programs.freetoken-desktop.enable` | `false` | Install the GUI and its launcher entry. |
+| `programs.freetoken-desktop.package` | this flake's build | The app package. |
+| `programs.freetoken-desktop.engine` | `services.freetoken.package` | The `ft` the GUI drives, as `FREETOKEN_FT_BIN`. |
+| `programs.freetoken-desktop.modelsDir` | `null` | Model library directory (`FREETOKEN_MODELS_DIR`). |
+| `programs.freetoken-desktop.environment` | `{ }` | Extra environment baked into the app's wrapper. |
+
+Three things worth knowing:
+
+- **It manages its own engine.** The GUI starts and stops `ft serve` itself, so
+  enabling `services.freetoken` as well means two processes racing for port
+  1919. Pick one, or move the service to another port; the module warns when it
+  sees both.
+- **The `engine` option is what makes it work on NixOS.** Left unset, the app
+  falls back to the installer it bundles, which builds a uv venv under
+  `~/.freetoken` from PyPI wheels — that will not run here. The module wires
+  `FREETOKEN_FT_BIN` to the Nix `ft` instead.
+- **Its in-app updater cannot work**, since it wants to replace a binary in the
+  Nix store. Bump the package instead.
+
+The app is closed source — upstream publishes only the AppImage/`.deb`/pacman
+bundles — so this repackages the `.deb` and it is marked `unfree` and
+`binaryNativeCode`. If the window comes up blank on the NVIDIA driver, set
+`programs.freetoken-desktop.environment.WEBKIT_DMABUF_RENDERER_FORCE_SHM = "1"`,
+which is what the app itself asks for on the WebKitGTK nixpkgs ships.
+
 ## Use the overlay instead
 
 If you already build your system with `nixpkgs.config.cudaSupport = true`:
@@ -147,7 +195,8 @@ If you already build your system with `nixpkgs.config.cudaSupport = true`:
 }
 ```
 
-The overlay adds `pkgs.freetoken` (the wrapped CLI) plus
+The overlay adds `pkgs.freetoken` (the wrapped CLI) and `pkgs.freetoken-desktop`
+(the GUI, already pointed at `pkgs.freetoken`), plus
 `pkgs.python3Packages.freetoken` and `pkgs.python3Packages.flashlib` — the one
 dependency nixpkgs does not carry — for composing your own Python environment.
 
@@ -157,6 +206,7 @@ dependency nixpkgs does not carry — for composing your own Python environment.
 |---|---|
 | `packages.x86_64-linux.freetoken` | `ft`, wrapped with a CUDA toolchain for runtime JIT. The default. |
 | `packages.x86_64-linux.freetoken-triton` | The same without flashinfer; far smaller, falls back to the pure-Triton attention backend. |
+| `packages.x86_64-linux.freetoken-desktop` | The GUI, wired to the `ft` above. Unfree, prebuilt binary. |
 | `packages.x86_64-linux.python3Packages-freetoken` | The bare Python package. |
 | `packages.x86_64-linux.python3Packages-flashlib` | flashlib 0.3.0, FreeToken's expert-cache kernel library. |
 
@@ -204,6 +254,12 @@ $ nix run nixpkgs#nurl -- https://github.com/FlashML-org/FreeToken v0.1.3
 
 Then re-check the dependency list in that file against upstream's
 `pyproject.toml`, since the relaxations above are version-specific.
+
+The GUI is versioned separately. Its current release is in
+[`update/stable.json`](https://github.com/FlashML-org/FreeToken-Web/blob/main/update/stable.json)
+on the FreeToken-Web repo; bump `version` in
+[`pkgs/freetoken-desktop/default.nix`](pkgs/freetoken-desktop/default.nix) and
+refresh the hash with `nix-prefetch-url` on the `.deb` asset.
 
 ## Development
 
