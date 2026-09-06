@@ -12,7 +12,13 @@
 # 13.0.3, and FreeToken's setup.py refuses to build kernels with an nvcc whose
 # major does not match torch's.
 final: prev: {
-  cudaPackages = final.cudaPackages_13;
+  # NCCL and NVSHMEM come from NVIDIA's own wheels rather than nixpkgs' source
+  # builds: both are hard buildInputs of torch-bin, neither is in any binary
+  # cache, and building NCCL means compiling its device kernels for every entry
+  # in `cudaCapabilities` -- for collectives a single-GPU engine never calls.
+  cudaPackages = final.cudaPackages_13.overrideScope (
+    cudaFinal: _cudaPrev: final.callPackage ../pkgs/nvidia-wheels { cudaPackages = cudaFinal; }
+  );
 
   python3 =
     let
