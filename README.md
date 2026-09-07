@@ -190,6 +190,31 @@ bundles — so this repackages the `.deb` and it is marked `unfree` and
 `programs.freetoken-desktop.environment.WEBKIT_DMABUF_RENDERER_FORCE_SHM = "1"`,
 which is what the app itself asks for on the WebKitGTK nixpkgs ships.
 
+## Runtime caches
+
+`ft` compiles CUDA kernels on first use — Triton's own, flashinfer's, torch C++
+extensions — and caches the results so later runs start fast. Under
+`services.freetoken` they all go to `cacheDir`. Started from the GUI or a shell
+they go to `$XDG_CACHE_HOME` (`~/.cache`), except that Triton's default is
+`~/.triton`, which this flake's `ft` redirects to
+`$XDG_CACHE_HOME/freetoken/triton`. All of it is safe to delete; the next run
+recompiles.
+
+The redirect is not tidiness. Triton compiles a CUDA driver shim into its cache
+directory and then `dlopen()`s it, so a cache on a `noexec` mount fails at the
+first kernel launch with
+
+```
+ImportError: .../cuda_utils.cpython-314-x86_64-linux-gnu.so: failed to map segment from shared object
+```
+
+which names the file but not the mount that rejected it. This bites the
+impermanence layout in particular, where `/home` is a `noexec` tmpfs and only
+the persisted subdirectories are real filesystems — `~/.triton` is not usually
+one of them, `~/.cache` usually is. If you hit that error anyway, the cache
+directory it names is on a mount without `exec`: persist it, or point
+`TRITON_CACHE_DIR` somewhere that has it.
+
 ## Use the overlay instead
 
 If you already build your system with `nixpkgs.config.cudaSupport = true`:

@@ -36,6 +36,25 @@ let
   # flashinfer's), so the toolkit has to be there at *run* time, not just at
   # build time.
   cudaHome = freetoken.cudaRuntimeHome;
+
+  # Triton's JIT cache is the one runtime cache that defaults outside
+  # `$XDG_CACHE_HOME`: it lands in `$HOME/.triton`. That is more than
+  # untidiness, because Triton compiles its CUDA driver shim into that
+  # directory and then `dlopen()`s it. A `$HOME` mounted `noexec` — an
+  # impermanence tmpfs, for instance, where only the persisted subdirectories
+  # are real filesystems — therefore dies at the first kernel launch with
+  # `ImportError: .../cuda_utils.cpython-*.so: failed to map segment from
+  # shared object`, which says nothing about the mount that caused it. Point it
+  # at the cache directory instead, which such setups do persist and do mount
+  # executable.
+  #
+  # A default, not an override: `TRITON_CACHE_DIR` from the environment still
+  # wins, which is how the NixOS module puts it under its own `cacheDir`.
+  tritonCacheDefault = ''
+    if [ -z "''${TRITON_CACHE_DIR:-}" ]; then
+      export TRITON_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/freetoken/triton"
+    fi
+  '';
 in
 stdenvNoCC.mkDerivation {
   pname = "freetoken";
@@ -50,6 +69,7 @@ stdenvNoCC.mkDerivation {
 
     makeWrapper ${pythonEnv}/bin/ft $out/bin/ft \
       --set-default CUDA_HOME ${cudaHome} \
+      --run ${lib.escapeShellArg tritonCacheDefault} \
       --prefix PATH : ${
         lib.makeBinPath [
           cudaHome
