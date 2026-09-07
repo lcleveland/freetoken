@@ -10,6 +10,7 @@
   addDriverRunpath,
   gcc,
   binutils,
+  ninja,
 
   # Pull in flashinfer's fused kernels. Turning this off leaves the runtime on
   # its pure-Triton fallbacks (`--attention-backend triton`), which is a much
@@ -35,7 +36,26 @@ let
   # FreeToken JIT-compiles CUDA kernels on first use (both its own and
   # flashinfer's), so the toolkit has to be there at *run* time, not just at
   # build time.
+  #
+  # The compile is driven by ninja, not by a direct compiler call: tvm-ffi
+  # writes a `build.ninja` into its cache directory and shells out to a bare
+  # `ninja` (`tvm_ffi.cpp.extension.build_ninja`), whose rules then invoke
+  # `c++`, `nvcc` and `ld` by name as well. So all four have to be on PATH, or
+  # the very first kernel launch dies with a bare
+  # `FileNotFoundError: ... 'ninja'` from deep inside CUDA graph capture.
   cudaHome = freetoken.cudaRuntimeHome;
+
+  # nvcc force-includes `cuda_runtime.h` into every translation unit, and finds
+  # it through the `INCLUDES` line of its own `nvcc.profile`. On a stock CUDA
+  # install that line is `-I$(TOP)/include` and resolves against CUDA_HOME, so
+  # the header comes along for free; nixpkgs instead pins it to the `cuda_nvcc`
+  # store path, which holds nvcc's own headers and *not* cudart's. At build time
+  # cudart's `dev` output patches the gap via the setup hook's
+  # `NIX_CFLAGS_COMPILE`, but a JIT compile at run time has no setup hooks, so
+  # every kernel fails with `cuda_runtime.h: No such file or directory` from
+  # `<command-line>`. Point nvcc back at the joined CUDA_HOME, which does carry
+  # both. `--prefix`, not `--set`, so a caller's own flags survive.
+  nvccIncludeFlag = "-I${cudaHome}/include";
 
   # Triton's JIT cache is the one runtime cache that defaults outside
   # `$XDG_CACHE_HOME`: it lands in `$HOME/.triton`. That is more than
@@ -69,12 +89,14 @@ stdenvNoCC.mkDerivation {
 
     makeWrapper ${pythonEnv}/bin/ft $out/bin/ft \
       --set-default CUDA_HOME ${cudaHome} \
+      --prefix NVCC_PREPEND_FLAGS ' ' ${lib.escapeShellArg nvccIncludeFlag} \
       --run ${lib.escapeShellArg tritonCacheDefault} \
       --prefix PATH : ${
         lib.makeBinPath [
           cudaHome
           gcc
           binutils
+          ninja
         ]
       } \
       --suffix LD_LIBRARY_PATH : ${addDriverRunpath.driverLink}/lib

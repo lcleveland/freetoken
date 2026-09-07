@@ -54,6 +54,12 @@ let
   # with libcudart; nixpkgs splits those across packages and outputs, so join
   # them. The extensions are plain C++ (`cuda_runtime_api.h` and `-lcudart`),
   # so the build needs nothing else.
+  #
+  # `lib64` is not a stray alias. A real CUDA install keeps its 64-bit libraries
+  # there, and both setup.py and tvm-ffi link against that spelling
+  # specifically -- tvm-ffi hardcodes `-L$CUDA_HOME/lib64 -lcudart` for every
+  # JIT module it builds. nixpkgs only ever produces `lib`, so without the alias
+  # the runtime JIT link fails with `cannot find -lcudart`.
   mkCudaHome =
     { suffix, extraPaths }:
     symlinkJoin {
@@ -67,6 +73,9 @@ let
           (lib.getLib cuda_cudart)
         ]
         ++ extraPaths;
+      postBuild = ''
+        [ -e "$out/lib64" ] || ln -s lib "$out/lib64"
+      '';
     };
 
   cudaHome = mkCudaHome {
@@ -74,11 +83,29 @@ let
     extraPaths = [ ];
   };
 
-  # Kernels JIT-compiled at run time (FreeToken's own and flashinfer's) do reach
-  # for the CCCL headers, so the runtime toolkit carries more than the build one.
+  # Kernels JIT-compiled at run time reach well past what the build needs, so
+  # the runtime toolkit is the larger of the two. FreeToken's own kernels want
+  # the CCCL headers; flashinfer's want cuBLAS and cuRAND on top of that, and
+  # resolve every one of them through `$CUDA_HOME/include` and
+  # `$CUDA_HOME/lib64` (`flashinfer.jit.cpp_ext`) rather than through anything a
+  # Nix setup hook could supply. The list mirrors flashinfer's own
+  # `buildInputs` in nixpkgs, which is the source of truth for what its kernels
+  # include; omitting cuBLAS fails at the first attention kernel with
+  # `cublasLt.h: No such file or directory`.
   cudaRuntimeHome = mkCudaHome {
     suffix = "-runtime";
-    extraPaths = [ (lib.getDev cudaPackages.cccl) ];
+    #
+    # Note the output names: the CUDA redistributables split their headers into
+    # a dedicated `include` output, so `lib.getDev` on one of them yields only
+    # setup hooks and no `include/` at all -- the join comes out with the
+    # libraries present and the headers still missing.
+    extraPaths = with cudaPackages; [
+      (lib.getDev cccl)
+      (lib.getOutput "include" libcublas)
+      (lib.getLib libcublas)
+      (lib.getOutput "include" libcurand)
+      (lib.getLib libcurand)
+    ];
   };
 in
 buildPythonPackage (finalAttrs: {
