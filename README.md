@@ -253,16 +253,57 @@ CUDA maintainers' cache (it replaced `cuda-maintainers.cachix.org` in November
 revision this flake pins that covers every expensive path here — torch,
 triton, flashinfer's AOT build, `nvidia-cutlass-dsl`, `cuda-bindings`.
 
-The NixOS modules add it for you; `services.freetoken.binaryCache.enable`
-turns it off if you would rather not trust a third-party cache (and then you
-build the closure yourself). For plain `nix build`/`nix run` against this flake,
-the same cache is in `nixConfig`, which Nix applies for trusted users.
+### Configure it before the first build, not during
 
-With it configured, installing FreeToken fetches 101 paths (~11 GiB) and builds
-**nine** derivations, all of them small and all of them ours: flashlib (pure
-Python), FreeToken's two C++ extension files, two `symlinkJoin`s for
-`CUDA_HOME`, and the wrapper. Nothing in that list compiles for more than
-seconds.
+This part is a footgun, and neither half of the obvious answer works on its
+own:
+
+- `services.freetoken.binaryCache` (on by default) writes the cache into the
+  **built** system's `nix.conf`. The rebuild that builds FreeToken is still
+  using the *old* `nix.conf`, so it compiles torch anyway and the setting only
+  helps from the next rebuild onward.
+- This flake's `nixConfig` only applies to the flake Nix was invoked on. Import
+  this flake as an input to your system flake and it is ignored — as it is for
+  any user who is not a trusted user.
+
+So for the first build, pass it on the command line:
+
+```console
+$ sudo nixos-rebuild switch \
+    --option extra-substituters https://cache.nixos-cuda.org \
+    --option extra-trusted-public-keys "cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M="
+```
+
+Or put it in your own configuration and rebuild once *before* enabling
+FreeToken, which is the better habit if you use CUDA for anything else:
+
+```nix
+nix.settings = {
+  substituters = [ "https://cache.nixos-cuda.org" ];
+  trusted-public-keys = [
+    "cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M="
+  ];
+};
+```
+
+`services.freetoken.binaryCache.enable = false` opts out entirely, if you would
+rather not trust a third-party cache and are happy to build the closure.
+
+If you see `cuda12.9-libnvshmem` or `python3.14-torch` in a `buildPhase`, the
+cache is not being consulted — stop the build and fix the substituters rather
+than waiting it out.
+
+The difference, measured on this flake's pinned nixpkgs:
+
+| | derivations built | downloaded |
+| --- | --- | --- |
+| With `cache.nixos-cuda.org` | **9** | 11.3 GiB |
+| Without it | **104**, including torch, `libnvshmem` and flashinfer's AOT build | 855 MiB |
+
+It trades bandwidth for CPU-hours, and the nine remaining builds are all small
+and all ours: flashlib (pure Python), FreeToken's two C++ extension files, two
+`symlinkJoin`s for `CUDA_HOME`, and the wrapper. Nothing in that list compiles
+for more than seconds.
 
 Two things will silently take you off the cache, which is why this flake does
 neither by default:
