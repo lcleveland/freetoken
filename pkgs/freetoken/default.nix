@@ -45,6 +45,11 @@
 }:
 
 let
+  # The commit we build: main, past v0.1.2 (see the version comment below).
+  rev = "af71ba43206e124f5ff6419b47ee36c6e9981078";
+
+  # What upstream's own `freetoken.version.__version__` still says at that commit.
+  upstreamVersion = "0.1.2";
   # setup.py wants a single CUDA_HOME holding bin/nvcc, include/ and a lib dir
   # with libcudart; nixpkgs splits those across packages and outputs, so join
   # them. The extensions are plain C++ (`cuda_runtime_api.h` and `-lcudart`),
@@ -78,14 +83,20 @@ let
 in
 buildPythonPackage (finalAttrs: {
   pname = "freetoken";
-  version = "0.1.2";
+
+  # Past v0.1.2 deliberately. The tag is from 2026-08-19 and predates GLM-5.3-Flash
+  # (upstream #332, 2026-09-01), so serving a Glm5NextForConditionalGeneration
+  # checkpoint against the tag dies in the model registry. Upstream has not cut a
+  # release since, so there is no tag that carries it.
+  version = "0.1.2-unstable-2026-09-03";
+
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "FlashML-org";
     repo = "FreeToken";
-    tag = "v${finalAttrs.version}";
-    hash = "sha256-0MhuubuTjNvtQZxisC2cg1dJeR+A6wZ901H5FRv+l+c=";
+    inherit rev;
+    hash = "sha256-FCHUdRPTf+E4J2O+R4FKiVhUjmEJt3sNK9p50R84xSg=";
   };
 
   build-system = [
@@ -171,6 +182,14 @@ buildPythonPackage (finalAttrs: {
   nativeInstallCheckInputs = [ versionCheckHook ];
   versionCheckProgramArg = "--version";
 
+  # The hook greps the output for `$version`, and upstream's own version string is
+  # still bare "0.1.2" on main -- it has not been bumped since the tag. Point the
+  # check at what `ft` actually prints, rather than dropping the check or pretending
+  # our version is the tag's.
+  preInstallCheck = ''
+    version=${upstreamVersion}
+  '';
+
   passthru = {
     inherit cudaHome cudaRuntimeHome cudaPackages;
   };
@@ -184,7 +203,8 @@ buildPythonPackage (finalAttrs: {
       Anthropic-compatible HTTP APIs.
     '';
     homepage = "https://github.com/FlashML-org/FreeToken";
-    changelog = "https://github.com/FlashML-org/FreeToken/releases/tag/v${finalAttrs.version}";
+    # No release carries this commit, so link the log since the last tag.
+    changelog = "https://github.com/FlashML-org/FreeToken/compare/v${upstreamVersion}...${rev}";
     license = lib.licenses.asl20;
     mainProgram = "ft";
     platforms = [ "x86_64-linux" ];
