@@ -23,7 +23,6 @@
   flashlib,
   gguf,
   huggingface-hub,
-  modelscope,
   msgpack,
   numpy,
   openai,
@@ -159,7 +158,6 @@ buildPythonPackage (finalAttrs: {
     flashlib
     gguf
     huggingface-hub
-    modelscope
     msgpack
     numpy
     openai
@@ -183,6 +181,16 @@ buildPythonPackage (finalAttrs: {
     # ABI-locked binary wheel with no nixpkgs package, so `accel` is `fi` here.
     accel = [ flashinfer-python ];
   };
+
+  # modelscope is upstream's alternative model-download backend: `snapshot_download`
+  # is imported lazily in server/args.py, and only when `--model-source modelscope`
+  # is given a model path that is not already a local directory. nixpkgs marks the
+  # package insecure (CVE-2026-84202, unsafe YAML deserialisation while loading a
+  # model config), which refuses evaluation of every system that pulls freetoken in.
+  # Hugging Face is the default and the only source this flake's module exposes, so
+  # drop the dep instead of permitting the CVE; `--model-source modelscope` then
+  # fails with an ImportError rather than silently reaching for a vulnerable loader.
+  pythonRemoveDeps = [ "modelscope" ];
 
   # Upstream pins are floor=last-verified / ceiling=next-major rather than known
   # incompatibilities; nixpkgs simply carries different releases.
