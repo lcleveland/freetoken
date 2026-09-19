@@ -46,6 +46,10 @@ final: prev: {
 
           triton = pyPrev.triton-bin;
 
+          # torchvision builds against `torch.cxxdev`, which only the
+          # from-source torch has; its own wheel matches torch-bin's ABI.
+          torchvision = pyPrev.torchvision-bin;
+
           # AOT mode compiles every kernel ahead of time, which is the second
           # multi-hour build in this closure. JIT mode installs in seconds and
           # compiles what it actually needs on first use, with the toolkit the
