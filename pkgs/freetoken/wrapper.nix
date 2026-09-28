@@ -26,6 +26,14 @@
 let
   inherit (python3.pkgs) freetoken;
 
+  # Upstream installs `ft` and the interpreter that carries torch into one venv,
+  # and FreeToken Desktop relies on that: its repair and model-download helpers
+  # pipe a script into the `python` (or `python3`) sitting next to
+  # $FREETOKEN_FT_BIN. A bare `$out/bin/python` would collide with pkgs.python3
+  # in any profile that has both, so the trio lives here and `$out/bin/ft` is a
+  # symlink into it.
+  engineDir = "libexec/freetoken";
+
   pythonEnv = python3.withPackages (
     ps:
     [ ps.freetoken ]
@@ -87,19 +95,29 @@ stdenvNoCC.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    makeWrapper ${pythonEnv}/bin/ft $out/bin/ft \
-      --set-default CUDA_HOME ${cudaHome} \
-      --prefix NVCC_PREPEND_FLAGS ' ' ${lib.escapeShellArg nvccIncludeFlag} \
-      --run ${lib.escapeShellArg tritonCacheDefault} \
-      --prefix PATH : ${
-        lib.makeBinPath [
-          cudaHome
-          gcc
-          binutils
-          ninja
-        ]
-      } \
-      --suffix LD_LIBRARY_PATH : ${addDriverRunpath.driverLink}/lib
+    mkdir -p $out/bin $out/${engineDir}
+
+    wrap() {
+      makeWrapper ${pythonEnv}/bin/"$1" $out/${engineDir}/"$1" \
+        --set-default CUDA_HOME ${cudaHome} \
+        --prefix NVCC_PREPEND_FLAGS ' ' ${lib.escapeShellArg nvccIncludeFlag} \
+        --run ${lib.escapeShellArg tritonCacheDefault} \
+        --prefix PATH : ${
+          lib.makeBinPath [
+            cudaHome
+            gcc
+            binutils
+            ninja
+          ]
+        } \
+        --suffix LD_LIBRARY_PATH : ${addDriverRunpath.driverLink}/lib
+    }
+
+    wrap ft
+    wrap python
+    wrap python3
+
+    ln -s ../${engineDir}/ft $out/bin/ft
 
     runHook postInstall
   '';
@@ -107,6 +125,7 @@ stdenvNoCC.mkDerivation {
   passthru = {
     inherit
       cudaHome
+      engineDir
       pythonEnv
       withAccel
       ;

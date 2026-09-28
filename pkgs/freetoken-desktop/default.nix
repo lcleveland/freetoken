@@ -25,6 +25,19 @@
   freetoken,
 }:
 
+let
+  # Not `lib.getExe`: the app's repair and download helpers feed their Python
+  # scripts to the interpreter next to FREETOKEN_FT_BIN, so it has to be the
+  # copy of `ft` that has one (`freetoken.engineDir`). Without it they reach
+  # for whatever `python` they can find and die on `No module named 'torch'`.
+  # `or` keeps an arbitrary `ft` package (the module allows one) working.
+  ftBin =
+    if freetoken != null && freetoken ? engineDir then
+      "${freetoken}/${freetoken.engineDir}/ft"
+    else
+      lib.getExe freetoken;
+in
+
 stdenv.mkDerivation (finalAttrs: {
   pname = "freetoken-desktop";
   version = "0.2.0-beta.22";
@@ -115,7 +128,7 @@ stdenv.mkDerivation (finalAttrs: {
     gappsWrapperArgs+=(
       --suffix LD_LIBRARY_PATH : ${addDriverRunpath.driverLink}/lib
       ${lib.optionalString (freetoken != null) ''
-        --set-default FREETOKEN_FT_BIN ${lib.getExe freetoken}
+        --set-default FREETOKEN_FT_BIN ${ftBin}
       ''}
     )
   '';
