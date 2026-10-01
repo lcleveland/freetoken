@@ -40,12 +40,12 @@ in
 
 stdenv.mkDerivation (finalAttrs: {
   pname = "freetoken-desktop";
-  version = "0.2.0-beta.22";
+  version = "0.2.0-beta.23";
 
   # Upstream publishes only binaries; the desktop app is not open source.
   src = fetchurl {
     url = "https://github.com/FlashML-org/FreeToken-Web/releases/download/v${finalAttrs.version}/freetoken-desktop-amd64.deb";
-    hash = "sha256-jaIz643xWwd2cJvPxWRgKKLg16mMEgUfXvRsNfU5Snk=";
+    hash = "sha256-oQw0IznjZzULy1TIOUp9c39nP2jrht5ksmxL7v+bm4I=";
   };
 
   nativeBuildInputs = [
