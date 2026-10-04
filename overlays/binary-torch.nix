@@ -16,7 +16,10 @@ final: prev: {
   # builds: both are hard buildInputs of torch-bin, neither is in any binary
   # cache, and building NCCL means compiling its device kernels for every entry
   # in `cudaCapabilities` -- for collectives a single-GPU engine never calls.
-  cudaPackages = final.cudaPackages_13.overrideScope (
+  # ponytail: pinned to 13.3 because nixpkgs' cudaPackages_13 moved to 13.4 before
+  # its cuda-bindings did ("Unsupported cuda-bindings version: 13.4"). Go back to
+  # cudaPackages_13 once pkgs/development/python-modules/cuda-bindings has 13_4.nix.
+  cudaPackages = final.cudaPackages_13_3.overrideScope (
     cudaFinal: _cudaPrev: final.callPackage ../pkgs/nvidia-wheels { cudaPackages = cudaFinal; }
   );
 
