@@ -1,8 +1,8 @@
 {
   description = "Nix package and NixOS module for FreeToken, the edge-native MoE serving engine";
 
-  # Without this, `nix build`/`nix run` against this flake compiles torch and
-  # flashinfer from source: cache.nixos.org carries no unfree CUDA. The NixOS
+  # Serves the unfree CUDA redistributables, which cache.nixos.org never
+  # carries; without it they are fetched from NVIDIA and unpacked locally. The NixOS
   # modules configure the same cache through
   # `services.freetoken.binaryCache`, which is what a `nixos-rebuild` needs --
   # nixConfig only reaches direct `nix` invocations, and only for trusted users.
@@ -31,35 +31,32 @@
       # Consumers that already build their system with `cudaSupport` can skip
       # this and use `overlays.default` on their own nixpkgs instead.
       #
-      # This is deliberately nixpkgs' stock CUDA stack -- from-source torch at
-      # the default CUDA version -- because that is exactly what
-      # cache.nixos-cuda.org has already built. Anything else (a newer CUDA, or
-      # torch's own wheel) is a cache miss and means building it yourself.
-      mkPkgs =
-        {
-          system,
-          binaryTorch ? false,
-        }:
+      # The torch is PyTorch's own cu130 wheel (`overlays.binary-torch`), not
+      # nixpkgs' from-source build: FreeToken tracks torch releases faster than
+      # nixpkgs does, and a wheel is a download where a source build is hours.
+      pkgsFor =
+        system:
         import nixpkgs {
           inherit system;
           config = {
             allowUnfree = true;
             cudaSupport = true;
           };
-          overlays = lib.optional binaryTorch self.overlays.binary-torch ++ [ self.overlays.default ];
+          overlays = [
+            self.overlays.binary-torch
+            self.overlays.default
+          ];
         };
-
-      pkgsFor = system: mkPkgs { inherit system; };
     in
     {
       overlays = {
         default = import ./overlay.nix;
 
-        # Opt-in, and rarely what you want: it swaps in torch's own cu130 wheel
-        # and CUDA 13, which no public cache carries, so it trades an hour of
-        # NCCL and flashinfer builds for a torch download. Only worth it if you
-        # cannot use cache.nixos-cuda.org. It is also invasive -- it replaces
-        # `pkgs.python3` and `pkgs.cudaPackages` wholesale.
+        # What this flake's own packages are built with: torch, triton and
+        # torchvision from PyTorch's cu130 wheels, NCCL/NVSHMEM from NVIDIA's,
+        # on CUDA 13. Invasive -- it replaces `pkgs.python3` and
+        # `pkgs.cudaPackages` wholesale -- so apply it to your own nixpkgs only
+        # if you want the same stack system-wide.
         binary-torch = import ./overlays/binary-torch.nix;
       };
 
@@ -78,13 +75,9 @@
           # pure-Triton attention backend.
           freetoken-triton = pkgs.freetoken.override { withAccel = false; };
 
-          # Built against torch's own wheel and CUDA 13 rather than nixpkgs'
-          # cached stack. See `overlays.binary-torch` for when that is worth it.
-          freetoken-wheel =
-            (mkPkgs {
-              inherit system;
-              binaryTorch = true;
-            }).freetoken;
+          # Kept for configurations that still name it; the default is the
+          # wheel build now.
+          freetoken-wheel = pkgs.freetoken;
 
           # The GUI control panel, pointed at the `ft` above.
           freetoken-desktop = pkgs.freetoken-desktop;

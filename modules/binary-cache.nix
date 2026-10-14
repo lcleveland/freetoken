@@ -23,18 +23,15 @@ in
         Add {option}`services.freetoken.binaryCache.url` to Nix's substituters
         and trust its key.
 
-        None of this closure is on `cache.nixos.org` — the CUDA
-        redistributables are unfree, so hydra never builds them — so a cache is
-        the only way to install FreeToken without compiling torch and
-        flashinfer.
+        The CUDA redistributables are unfree, so `cache.nixos.org` never
+        carries them. Without this cache Nix fetches NVIDIA's archives directly
+        and unpacks them locally: slower, but nothing is compiled either way,
+        since torch comes from PyTorch's wheels.
 
-        Note what this option cannot do: it configures the system being built,
-        so the rebuild that first builds FreeToken still runs under the previous
-        `nix.conf` and compiles the closure regardless. Pass the cache to that
-        first `nixos-rebuild` with `--option extra-substituters` and `--option
-        extra-trusted-public-keys`, or set it in `nix.settings` and rebuild once
-        before enabling FreeToken. From then on this option keeps it
-        configured.
+        It configures the system being built, so the rebuild that first builds
+        FreeToken still runs under the previous `nix.conf`. Pass the cache to
+        that first `nixos-rebuild` with `--option extra-substituters` and
+        `--option extra-trusted-public-keys` if you want it used there too.
       '';
     };
 

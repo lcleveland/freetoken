@@ -6,9 +6,10 @@ Mixture-of-Experts serving engine for running frontier-scale open-weight models
 on consumer NVIDIA hardware.
 
 Upstream ships a PyPI wheel and an `install.sh`; neither fits NixOS. This flake
-builds FreeToken from source against nixpkgs' own torch/CUDA stack, wraps `ft`
-with the CUDA toolchain it needs to JIT kernels at run time, and adds a
-`services.freetoken` module that runs `ft serve` as a hardened systemd service.
+builds FreeToken from source against PyTorch's own cu130 wheels (patched for
+Nix, on CUDA 13), wraps `ft` with the CUDA toolchain it needs to JIT kernels at
+run time, and adds a `services.freetoken` module that runs `ft serve` as a
+hardened systemd service.
 
 It also packages **FreeToken Desktop**, the GUI, with a proper launcher entry
 and its engine pointed at the Nix `ft` — see [Desktop GUI](#desktop-gui).
@@ -16,13 +17,11 @@ and its engine pointed at the Nix `ft` — see [Desktop GUI](#desktop-gui).
 ## Requirements
 
 - `x86_64-linux` with an NVIDIA GPU and the proprietary driver loaded
-  (`hardware.graphics.enable = true` plus `hardware.nvidia.*`; upstream asks for
-  r580+ for CUDA 13, though this flake builds against whichever CUDA version
-  nixpkgs' torch uses).
+  (`hardware.graphics.enable = true` plus `hardware.nvidia.*`). The torch here
+  is a CUDA 13 build, so the driver has to be r580 or newer.
 - Unfree packages allowed — CUDA, and the CuteDSL runtime `flashlib` pulls in.
-- The CUDA binary cache configured, or the first install compiles torch from
-  source. The NixOS modules set it up; see [Build cost](#build-cost).
-- Bandwidth and disk: the closure is ~11 GiB downloaded.
+- Bandwidth and disk: the closure is ~4–5 GiB downloaded. Nothing in it takes
+  more than a few minutes to build; see [Build cost](#build-cost).
 
 ## Try it
 
@@ -91,7 +90,7 @@ downloaded into the state directory on first start.
 | `services.freetoken.extraArgs` | `[ ]` | Arguments appended verbatim. |
 | `services.freetoken.environment` | `{ }` | Extra environment variables (`FREETOKEN_*`, `HF_*`, …). |
 | `services.freetoken.environmentFile` | `null` | `EnvironmentFile=` for secrets such as `HF_TOKEN`. |
-| `services.freetoken.binaryCache.enable` | `true` | Add the CUDA binary cache, without which the first build compiles torch. |
+| `services.freetoken.binaryCache.enable` | `true` | Add the CUDA binary cache, which saves unpacking NVIDIA's libraries locally. |
 
 `settings` maps one-to-one onto the flags in
 [upstream's CLI reference](https://github.com/FlashML-org/FreeToken/blob/main/docs/cli.md):
@@ -195,10 +194,18 @@ which is what the app itself asks for on the WebKitGTK nixpkgs ships.
 `ft` compiles CUDA kernels on first use — Triton's own, flashinfer's, torch C++
 extensions — and caches the results so later runs start fast. Under
 `services.freetoken` they all go to `cacheDir`. Started from the GUI or a shell
-they go to `$XDG_CACHE_HOME` (`~/.cache`), except that Triton's default is
-`~/.triton`, which this flake's `ft` redirects to
-`$XDG_CACHE_HOME/freetoken/triton`. All of it is safe to delete; the next run
-recompiles.
+they go to `$XDG_CACHE_HOME` (`~/.cache`), with two redirects in this flake's
+`ft`: Triton's default `~/.triton` becomes `$XDG_CACHE_HOME/freetoken/triton`,
+and flashinfer's `~/.cache/flashinfer` becomes
+`$XDG_CACHE_HOME/freetoken/flashinfer/<store path>`. All of it is safe to
+delete; the next run recompiles.
+
+flashinfer gets one directory per build because its own cache is keyed only on
+its version and the GPU, while the `build.ninja` it leaves there names its
+sources by store path. Once a rebuild and a garbage collection remove those
+paths, the next run dies on its first request with `norm.cu ... missing and no
+known rule to make it`. The cost is that old directories pile up until you
+delete them.
 
 The redirect is not tidiness. Triton compiles a CUDA driver shim into its cache
 directory and then `dlopen()`s it, so a cache on a `noexec` mount fails at the
@@ -227,9 +234,17 @@ If you already build your system with `nixpkgs.config.cudaSupport = true`:
 ```
 
 `overlays.default` leaves torch alone, so it builds against the from-source
-torch your nixpkgs already uses — which is the one `cache.nixos-cuda.org` has.
-`overlays.binary-torch` is the off-cache wheel swap described under
-[Build cost](#build-cost).
+torch your nixpkgs already uses. That torch is 2.13, and the FreeToken packaged
+here needs 2.14, so on its own it builds a combination upstream does not
+support. Add `overlays.binary-torch` before it to get the same wheel stack this
+flake's packages use:
+
+```nix
+nixpkgs.overlays = [ freetoken.overlays.binary-torch freetoken.overlays.default ];
+```
+
+It replaces `pkgs.python3` and `pkgs.cudaPackages` wholesale, so everything else
+in your system that uses either moves to the wheel torch and CUDA 13 as well.
 
 The overlay adds `pkgs.freetoken` (the wrapped CLI) and `pkgs.freetoken-desktop`
 (the GUI, already pointed at `pkgs.freetoken`), plus
@@ -242,56 +257,62 @@ dependency nixpkgs does not carry — for composing your own Python environment.
 |---|---|
 | `packages.x86_64-linux.freetoken` | `ft`, wrapped with a CUDA toolchain for runtime JIT. The default. |
 | `packages.x86_64-linux.freetoken-triton` | The same without flashinfer; falls back to the pure-Triton attention backend. |
-| `packages.x86_64-linux.freetoken-wheel` | Built against torch's own cu130 wheel and CUDA 13. Off-cache; see [Build cost](#build-cost). |
+| `packages.x86_64-linux.freetoken-wheel` | An alias for `freetoken`, kept for configurations that name it. |
 | `packages.x86_64-linux.freetoken-desktop` | The GUI, wired to the `ft` above. Unfree, prebuilt binary. |
 | `packages.x86_64-linux.python3Packages-freetoken` | The bare Python package. |
-| `packages.x86_64-linux.python3Packages-flashlib` | flashlib 0.3.0, FreeToken's expert-cache kernel library. |
+| `packages.x86_64-linux.python3Packages-flashlib` | flashlib 0.4.0, FreeToken's expert-cache kernel library. |
 
 ### How this differs from `pip install freetoken[accel]`
 
+- **It tracks upstream `main`**, not a release tag, because `main` is where
+  torch 2.14 support landed. The `ft --version` string still reads 0.1.3.
 - **No `sglang-kernel`.** Upstream's `accel` extra is flashinfer plus
-  `sglang-kernel`, an ABI-locked binary wheel built against torch 2.11 with no
-  nixpkgs package. `accel` here is flashinfer only; FreeToken falls back to its
-  own Triton kernels for what `sgl_kernel` would have provided.
-- **Relaxed version pins.** Upstream pins `torch>=2.11,<2.12`,
-  `triton==3.6.0` and `numpy<2.5`; nixpkgs carries torch 2.13, triton 3.7 and
-  numpy 2.5. Those ceilings are "last verified", not known breakage, and
-  everything is built from source against the versions actually present — but it
-  is a real difference from what upstream tests.
+  `sglang-kernel`, an ABI-locked binary wheel with no nixpkgs package. `accel`
+  here is flashinfer only; FreeToken falls back to its own Triton kernels for
+  what `sgl_kernel` would have provided.
+- **torch, triton and torchvision match upstream's pins** (2.14.1, 3.8.0,
+  0.29.1) because they are PyTorch's own wheels. Everything else comes from
+  nixpkgs, and a few pins are relaxed to fit it — `transformers<5.17` against
+  nixpkgs' 5.17, plus `gguf` and `apache-tvm-ffi`, which nixpkgs versions
+  differently. Those ceilings are "last verified", not known breakage, but it is
+  a real difference from what upstream tests.
 - **Kernels are JIT-compiled**, not taken from upstream's prebuilt
-  `freetoken-kernel-cache` wheel. The first request after an upgrade pays for
-  the compile; results are cached under `cacheDir`.
+  `freetoken-kernel-cache` wheel. flashinfer is installed in JIT mode too
+  rather than nixpkgs' AOT build, which is hours of compiling. The first
+  requests after an upgrade pay for the compile; results are cached under
+  `cacheDir`.
 
 ## Build cost
 
-Enabling FreeToken should not mean compiling PyTorch, and it does not — but
-only because of one substituter, so set it up first.
+Enabling FreeToken does not mean compiling PyTorch. torch, triton and
+torchvision are PyTorch's own cu130 wheels, and NCCL and NVSHMEM come from
+NVIDIA's PyPI wheels: downloads plus `autoPatchelf`, not source builds.
+nixpkgs' own torch is a source build that only `cache.nixos-cuda.org` caches,
+and it trails upstream releases by weeks — FreeToken already needs torch 2.14,
+which nixpkgs does not have yet.
 
-`cache.nixos.org` carries **no** unfree CUDA: hydra does not build unfree
-packages, so cuDNN, NCCL and everything downstream of them are absent even at
-nixpkgs' default CUDA version. torch built with `cudaSupport` is therefore
-never cached there, and building it is hours.
+The rest of the closure is small. Counted from an empty store, at this flake's
+pinned nixpkgs:
+
+| | derivations built | downloaded |
+| --- | --- | --- |
+| With `cache.nixos-cuda.org` | **33** | 4.3 GiB |
+| Without it | **95** | 1.2 GiB from caches, plus NVIDIA's CUDA archives fetched directly |
+
+Either way, the only real compiles are `cuda-bindings` (Cython), `safetensors`
+(Rust), `numba`, FreeToken's two C++ extension files and flashinfer's JIT-mode
+install. The rest unpacks wheels and archives and joins `CUDA_HOME`. On the
+16-core test machine, with the cache and part of the closure already present,
+the build took about five minutes, most of it download.
 
 [`cache.nixos-cuda.org`](https://github.com/SomeoneSerge/nixpkgs-cuda-ci) is the
-CUDA maintainers' cache (it replaced `cuda-maintainers.cachix.org` in November
-2025). It carries nixpkgs built with `cudaSupport = true`, and at the nixpkgs
-revision this flake pins that covers every expensive path here — torch,
-triton, flashinfer's AOT build, `nvidia-cutlass-dsl`, `cuda-bindings`.
-
-### Configure it before the first build, not during
-
-This part is a footgun, and neither half of the obvious answer works on its
-own:
-
-- `services.freetoken.binaryCache` (on by default) writes the cache into the
-  **built** system's `nix.conf`. The rebuild that builds FreeToken is still
-  using the *old* `nix.conf`, so it compiles torch anyway and the setting only
-  helps from the next rebuild onward.
-- This flake's `nixConfig` only applies to the flake Nix was invoked on. Import
-  this flake as an input to your system flake and it is ignored — as it is for
-  any user who is not a trusted user.
-
-So for the first build, pass it on the command line:
+CUDA maintainers' cache. All it saves here is the CUDA 13.3 redistributables
+(cuDNN, cuBLAS, nvcc and the rest), which `cache.nixos.org` never carries
+because they are unfree. Without it, Nix downloads the same archives from NVIDIA
+and unpacks them locally. `services.freetoken.binaryCache` (on by default) adds
+it to the built system's `nix.conf`, so it takes effect from the rebuild *after*
+the one that enables FreeToken. To use it on the first build too, pass it on the
+command line:
 
 ```console
 $ sudo nixos-rebuild switch \
@@ -299,64 +320,32 @@ $ sudo nixos-rebuild switch \
     --option extra-trusted-public-keys "cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M="
 ```
 
-Or put it in your own configuration and rebuild once *before* enabling
-FreeToken, which is the better habit if you use CUDA for anything else:
+`services.freetoken.binaryCache.enable = false` opts out if you would rather not
+trust a third-party cache.
 
-```nix
-nix.settings = {
-  substituters = [ "https://cache.nixos-cuda.org" ];
-  trusted-public-keys = [
-    "cache.nixos-cuda.org:74DUi4Ye579gUqzH4ziL9IyiJBlDpMRn9MBN8oNan9M="
-  ];
-};
-```
-
-`services.freetoken.binaryCache.enable = false` opts out entirely, if you would
-rather not trust a third-party cache and are happy to build the closure.
-
-If you see `cuda12.9-libnvshmem` or `python3.14-torch` in a `buildPhase`, the
-cache is not being consulted — stop the build and fix the substituters rather
-than waiting it out.
-
-The difference, measured on this flake's pinned nixpkgs:
-
-| | derivations built | downloaded |
-| --- | --- | --- |
-| With `cache.nixos-cuda.org` | **9** | 11.3 GiB |
-| Without it | **104**, including torch, `libnvshmem` and flashinfer's AOT build | 855 MiB |
-
-It trades bandwidth for CPU-hours, and the nine remaining builds are all small
-and all ours: flashlib (pure Python), FreeToken's two C++ extension files, two
-`symlinkJoin`s for `CUDA_HOME`, and the wrapper. Nothing in that list compiles
-for more than seconds.
-
-Two things will silently take you off the cache, which is why this flake does
-neither by default:
-
-- **Moving off nixpkgs' default CUDA version.** CUDA 13 has torch and triton
-  cached but not flashinfer, so it costs you flashinfer's AOT build.
-- **Using torch's own wheel** (`overlays.binary-torch`,
-  `packages.freetoken-wheel`). Nothing public caches `torch-bin` or a CUDA 13
-  NCCL, so it trades hours of NCCL and flashinfer builds for a torch download.
-  It exists for people who cannot use the cache; it is not the fast path.
-
-`nix flake update` moves the pin, and the cache only has what its CI has built,
-so a very fresh nixpkgs may not be covered yet.
+The wheels are pinned in
+[`overlays/binary-torch.nix`](overlays/binary-torch.nix), ahead of nixpkgs'
+`torch-bin`, which is still at 2.13. The pins can go once nixpkgs catches up.
 
 `freetoken-triton` drops flashinfer entirely if you can live with the Triton
 attention backend.
 
 ## Updating to a new FreeToken release
 
-Bump `version` in [`pkgs/freetoken/default.nix`](pkgs/freetoken/default.nix) and
-refresh the hash:
+Bump `version` and the `rev` in
+[`pkgs/freetoken/default.nix`](pkgs/freetoken/default.nix) and refresh the hash
+(use a tag such as `v0.1.4` in place of the commit once a release covers it):
 
 ```console
-$ nix run nixpkgs#nurl -- https://github.com/FlashML-org/FreeToken v0.1.3
+$ nix run nixpkgs#nurl -- https://github.com/FlashML-org/FreeToken <commit-or-tag>
 ```
 
 Then re-check the dependency list in that file against upstream's
-`pyproject.toml`, since the relaxations above are version-specific.
+`pyproject.toml`, since the relaxations above are version-specific. If upstream
+moves its torch pin, the torch, triton and torchvision wheels in
+[`overlays/binary-torch.nix`](overlays/binary-torch.nix) move with it. The cp314
+cu130 wheels are listed at `https://download.pytorch.org/whl/cu130/torch/`, and
+`nix-prefetch-url` gives their hashes.
 
 The GUI is versioned separately. Its current release is in
 [`update/stable.json`](https://github.com/FlashML-org/FreeToken-Web/blob/main/update/stable.json)

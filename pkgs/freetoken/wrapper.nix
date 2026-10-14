@@ -83,6 +83,18 @@ let
       export TRITON_CACHE_DIR="''${XDG_CACHE_HOME:-$HOME/.cache}/freetoken/triton"
     fi
   '';
+
+  # flashinfer keys its JIT cache only on its version and the GPU arch, and
+  # the `build.ninja` it leaves there names its sources by store path. After a
+  # rebuild and a GC, the next run finds that file, runs it, and dies with
+  # `norm.cu ... missing and no known rule to make it`. Key the workspace on
+  # flashinfer's own store path so every build starts clean.
+  # ponytail: old per-build dirs pile up; delete the cache dir to reclaim them.
+  flashinferWorkspaceDefault = lib.optionalString withAccel ''
+    if [ -z "''${FLASHINFER_WORKSPACE_BASE:-}" ]; then
+      export FLASHINFER_WORKSPACE_BASE="''${XDG_CACHE_HOME:-$HOME/.cache}/freetoken/flashinfer/${builtins.baseNameOf python3.pkgs.flashinfer-python}"
+    fi
+  '';
 in
 stdenvNoCC.mkDerivation {
   pname = "freetoken";
@@ -102,6 +114,7 @@ stdenvNoCC.mkDerivation {
         --set-default CUDA_HOME ${cudaHome} \
         --prefix NVCC_PREPEND_FLAGS ' ' ${lib.escapeShellArg nvccIncludeFlag} \
         --run ${lib.escapeShellArg tritonCacheDefault} \
+        --run ${lib.escapeShellArg flashinferWorkspaceDefault} \
         --prefix PATH : ${
           lib.makeBinPath [
             cudaHome

@@ -68,6 +68,9 @@ let
           (lib.getDev cuda_cudart)
           (lib.getLib cuda_cudart)
         ]
+        # CUDA 13 split `crt/` (host_config.h, which cuda_runtime.h includes)
+        # out of nvcc into its own package.
+        ++ lib.optional (lib.versionAtLeast cudaPackages.cudaMajorVersion "13") cudaPackages.cuda_crt
         ++ extraPaths;
       postBuild = ''
         [ -e "$out/lib64" ] || ln -s lib "$out/lib64"
@@ -107,15 +110,16 @@ in
 buildPythonPackage (finalAttrs: {
   pname = "freetoken";
 
-  version = "0.1.3";
+  # Upstream main for torch 2.14; `freetoken.version` still says 0.1.3.
+  version = "0.1.3-unstable-2026-10-13";
 
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "FlashML-org";
     repo = "FreeToken";
-    tag = "v${finalAttrs.version}";
-    hash = "sha256-59itjnwDr4P7I/ZLIbkNw9/8CCPvTP7yNWl9ogBnZ3o=";
+    rev = "9c635a157798da4aa43e6d051e92620521ed1858";
+    hash = "sha256-A2g+bxzZkNEmAr0/DVybQH3x4Qu/ef7Btg1b5E1pOo4=";
   };
 
   build-system = [
@@ -139,7 +143,7 @@ buildPythonPackage (finalAttrs: {
   # One substitution covers both that entry and the runtime one.
   postPatch = ''
     substituteInPlace pyproject.toml \
-      --replace-fail '"torch>=2.11,<2.12"' '"torch"'
+      --replace-fail '"torch>=2.14,<2.15"' '"torch"'
   '';
 
   env.CUDA_HOME = cudaHome;
@@ -215,6 +219,7 @@ buildPythonPackage (finalAttrs: {
   # `ft --version` is deliberately torch-free upstream, so it runs in the sandbox.
   nativeInstallCheckInputs = [ versionCheckHook ];
   versionCheckProgramArg = "--version";
+  preVersionCheck = "version=0.1.3";
 
   passthru = {
     inherit cudaHome cudaRuntimeHome cudaPackages;
@@ -229,7 +234,7 @@ buildPythonPackage (finalAttrs: {
       Anthropic-compatible HTTP APIs.
     '';
     homepage = "https://github.com/FlashML-org/FreeToken";
-    changelog = "https://github.com/FlashML-org/FreeToken/releases/tag/v${finalAttrs.version}";
+    changelog = "https://github.com/FlashML-org/FreeToken/commits/main";
     license = lib.licenses.asl20;
     mainProgram = "ft";
     platforms = [ "x86_64-linux" ];

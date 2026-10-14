@@ -38,7 +38,20 @@ final: prev: {
           # on `torch.cudaSupport` and builds its arch list from
           # `torch.cudaCapabilities`. The wheel is a CUDA build by
           # construction, so state that rather than let it look CPU-only.
-          torch = pyPrev.torch-bin.overrideAttrs (old: {
+          #
+          # ponytail: wheels pinned here ahead of nixpkgs, which still ships 2.13 /
+          # 3.7 / 0.28 and only has cp314 x86_64 hashes. Drop the version/src
+          # overrides once nixpkgs' torch-bin reaches 2.14.
+          #
+          # Overridden under the -bin names because torchvision-bin takes
+          # `torch-bin` by name; the plain names point at these below.
+          torch-bin = pyPrev.torch-bin.overrideAttrs (old: {
+            version = "2.14.1";
+            src = final.fetchurl {
+              name = "torch-2.14.1+cu130-cp314-cp314-linux_x86_64.whl";
+              url = "https://download.pytorch.org/whl/cu130/torch-2.14.1%2Bcu130-cp314-cp314-manylinux_2_28_x86_64.whl";
+              hash = "sha256-Ugb6gxY6px3AGGY3sqouw/txFIkgOf3ePJG/VwvSO6g=";
+            };
             passthru = (old.passthru or { }) // {
               cudaSupport = true;
               rocmSupport = false;
@@ -47,11 +60,37 @@ final: prev: {
             };
           });
 
-          triton = pyPrev.triton-bin;
+          triton-bin = pyPrev.triton-bin.overridePythonAttrs (old: {
+            version = "3.8.0";
+            # nixpkgs' libcuda patch targets 3.7, where it returns one path; in
+            # 3.8 it lands in `libcuda_dirs()`, which must return a list of dirs.
+            postFixup = old.postFixup + ''
+              substituteInPlace "$out/${final.python3.sitePackages}/triton/backends/nvidia/driver.py" \
+                --replace-fail \
+                  "return '${final.addDriverRunpath.driverLink}/lib/libcuda.so'" \
+                  "return ['${final.addDriverRunpath.driverLink}/lib']"
+            '';
+            src = final.fetchurl {
+              name = "triton-3.8.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl";
+              url = "https://download.pytorch.org/whl/triton-3.8.0-cp314-cp314-manylinux_2_27_x86_64.manylinux_2_28_x86_64.whl";
+              hash = "sha256-SJ7+VmQeG8XT3zyfO6m8x7uN7kBpGuiMz1STiHN5UaI=";
+            };
+          });
 
           # torchvision builds against `torch.cxxdev`, which only the
           # from-source torch has; its own wheel matches torch-bin's ABI.
-          torchvision = pyPrev.torchvision-bin;
+          torchvision-bin = pyPrev.torchvision-bin.overrideAttrs {
+            version = "0.29.1";
+            src = final.fetchurl {
+              name = "torchvision-0.29.1+cu130-cp314-cp314-linux_x86_64.whl";
+              url = "https://download.pytorch.org/whl/cu130/torchvision-0.29.1%2Bcu130-cp314-cp314-manylinux_2_28_x86_64.whl";
+              hash = "sha256-pb2tZnAFwU5ELd95M8BI4CGDSvr0jmS5IMrra9HNfRU=";
+            };
+          };
+
+          torch = pyFinal.torch-bin;
+          triton = pyFinal.triton-bin;
+          torchvision = pyFinal.torchvision-bin;
 
           # AOT mode compiles every kernel ahead of time, which is the second
           # multi-hour build in this closure. JIT mode installs in seconds and

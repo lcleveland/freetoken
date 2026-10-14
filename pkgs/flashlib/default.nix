@@ -18,12 +18,12 @@
 
 buildPythonPackage rec {
   pname = "flashlib";
-  version = "0.3.0";
+  version = "0.4.0";
   pyproject = true;
 
   src = fetchPypi {
     inherit pname version;
-    hash = "sha256-t2mZOjDwD2z0QyzSqddCoYEW9XgkdTPvtbEmrAgb5As=";
+    hash = "sha256-hWAI4S3Y6YVUcljhBpYp5or1MPr4u5u9M+J5N6P6TBA=";
   };
 
   build-system = [ setuptools ];
