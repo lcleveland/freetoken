@@ -74,6 +74,8 @@ let
         license = lib.licenses.unfreeRedistributable;
         sourceProvenance = [ lib.sourceTypes.binaryNativeCode ];
         platforms = [ "x86_64-linux" ];
+        # nixpkgs' nccl4py inherits this from `cudaPackages.nccl.meta`.
+        badPlatforms = [ ];
       };
     });
 in
