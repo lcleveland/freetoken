@@ -16,9 +16,14 @@ final: prev: {
   freetoken-desktop = final.callPackage ./pkgs/freetoken-desktop { };
 
   pythonPackagesExtensions = prev.pythonPackagesExtensions ++ [
-    (pyFinal: _pyPrev: {
+    (pyFinal: pyPrev: {
       flashlib = pyFinal.callPackage ./pkgs/flashlib { };
       freetoken = pyFinal.callPackage ./pkgs/freetoken { };
+
+      # ponytail: cuda-bindings/cuda-core pin cython<3.3 but nixpkgs moved to
+      # 3.3.0. Mirrors NixOS/nixpkgs#575576; drop once that lands in nixpkgs.
+      cuda-bindings = pyPrev.cuda-bindings.override { cython = pyFinal.cython_3_2; };
+      cuda-core = pyPrev.cuda-core.override { cython = pyFinal.cython_3_2; };
     })
   ];
 }
