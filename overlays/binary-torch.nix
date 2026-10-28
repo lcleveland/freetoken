@@ -30,17 +30,6 @@ final: prev: {
         self = python;
 
         packageOverrides = pyFinal: pyPrev: {
-          # nixpkgs' libcuda patch makes `libcuda_dirs()` return one path, but in
-          # triton 3.8 it must return a list of dirs. Drop once nixpkgs patches 3.8.
-          triton-bin = pyPrev.triton-bin.overridePythonAttrs (old: {
-            postFixup = old.postFixup + ''
-              substituteInPlace "$out/${final.python3.sitePackages}/triton/backends/nvidia/driver.py" \
-                --replace-fail \
-                  "return '${final.addDriverRunpath.driverLink}/lib/libcuda.so'" \
-                  "return ['${final.addDriverRunpath.driverLink}/lib']"
-            '';
-          });
-
           torch = pyFinal.torch-bin;
           triton = pyFinal.triton-bin;
           torchvision = pyFinal.torchvision-bin;
