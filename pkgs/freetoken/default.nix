@@ -197,11 +197,14 @@ buildPythonPackage (finalAttrs: {
   # - numpy:          2.5 in nixpkgs vs. the <2.5 ceiling (numba's old bound)
   # - gguf:           versioned by llama.cpp build number in nixpkgs, not 0.x
   # - apache-tvm-ffi: same release, but the nixpkgs build derives its own version
-  # - transformers:   5.17 in nixpkgs vs. the <5.17 ceiling
+  # - transformers:   5.22 in nixpkgs vs. the <5.17 ceiling
   # - torchvision:    0.28 in nixpkgs vs. the <0.27 ceiling
+  # - huggingface-hub: 2.4 in nixpkgs vs. the <2 ceiling; utils/hf.py's imports
+  #   (hf_hub_download, snapshot_download, EntryNotFoundError) are unchanged in 2.x
   pythonRelaxDeps = [
     "apache-tvm-ffi"
     "gguf"
+    "huggingface_hub"
     "numpy"
     "torchvision"
     "transformers"
