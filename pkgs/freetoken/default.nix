@@ -21,7 +21,6 @@
   einops,
   fastapi,
   flashlib,
-  gguf,
   huggingface-hub,
   msgpack,
   numpy,
@@ -110,16 +109,16 @@ in
 buildPythonPackage (finalAttrs: {
   pname = "freetoken";
 
-  # Upstream main for torch 2.14; `freetoken.version` still says 0.1.3.
-  version = "0.1.3-unstable-2026-10-13";
+  # Upstream main past the 0.2.1 version bump; no 0.2.1 tag yet.
+  version = "0.2.1-unstable-2026-11-06";
 
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "FlashML-org";
     repo = "FreeToken";
-    rev = "9c635a157798da4aa43e6d051e92620521ed1858";
-    hash = "sha256-A2g+bxzZkNEmAr0/DVybQH3x4Qu/ef7Btg1b5E1pOo4=";
+    rev = "5209c8c327e961b607cc9733842ca349f22df9fc";
+    hash = "sha256-qtiQQ8rkAZ6IAtXE5YHV7pLpyAKwEYZl8q9zzMxMGes=";
   };
 
   build-system = [
@@ -153,7 +152,6 @@ buildPythonPackage (finalAttrs: {
     einops
     fastapi
     flashlib
-    gguf
     huggingface-hub
     msgpack
     numpy
@@ -195,15 +193,13 @@ buildPythonPackage (finalAttrs: {
   # incompatibilities; nixpkgs simply carries different releases.
   # - triton:         3.7 in nixpkgs vs. the ==3.6.0 pin
   # - numpy:          2.5 in nixpkgs vs. the <2.5 ceiling (numba's old bound)
-  # - gguf:           versioned by llama.cpp build number in nixpkgs, not 0.x
   # - apache-tvm-ffi: same release, but the nixpkgs build derives its own version
-  # - transformers:   5.22 in nixpkgs vs. the <5.17 ceiling
+  # - transformers:   5.22 in nixpkgs vs. the <5.19 ceiling
   # - torchvision:    0.28 in nixpkgs vs. the <0.27 ceiling
   # - huggingface-hub: 2.4 in nixpkgs vs. the <2 ceiling; utils/hf.py's imports
   #   (hf_hub_download, snapshot_download, EntryNotFoundError) are unchanged in 2.x
   pythonRelaxDeps = [
     "apache-tvm-ffi"
-    "gguf"
     "huggingface_hub"
     "numpy"
     "torchvision"
@@ -222,7 +218,7 @@ buildPythonPackage (finalAttrs: {
   # `ft --version` is deliberately torch-free upstream, so it runs in the sandbox.
   nativeInstallCheckInputs = [ versionCheckHook ];
   versionCheckProgramArg = "--version";
-  preVersionCheck = "version=0.1.3";
+  preVersionCheck = "version=0.2.1";
 
   passthru = {
     inherit cudaHome cudaRuntimeHome cudaPackages;
