@@ -110,15 +110,15 @@ buildPythonPackage (finalAttrs: {
   pname = "freetoken";
 
   # Upstream main one commit past v0.2.2 (modelopt_mixed quant fix).
-  version = "0.2.2-unstable-2026-11-09";
+  version = "0.2.2-unstable-2026-11-10";
 
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "FlashML-org";
     repo = "FreeToken";
-    rev = "fff1022a5c068826c0ab31ac063675392f2ec7a7";
-    hash = "sha256-faBwxRoKWx/npk+hMEUC1pmUyRufAXpvqcXo+12aH1o=";
+    rev = "f69d50686d4f9bba578f7ac91135c609bb9f9e90";
+    hash = "sha256-L7OR8Dvqfp7ptZhlb8irv9cuz55exG614f6RTLqKVbY=";
   };
 
   build-system = [
