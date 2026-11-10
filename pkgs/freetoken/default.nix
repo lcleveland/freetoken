@@ -202,6 +202,8 @@ buildPythonPackage (finalAttrs: {
     "apache-tvm-ffi"
     "huggingface_hub"
     "numpy"
+    "openai"
+    "pillow"
     "torchvision"
     "transformers"
     "triton"
@@ -218,7 +220,8 @@ buildPythonPackage (finalAttrs: {
   # `ft --version` is deliberately torch-free upstream, so it runs in the sandbox.
   nativeInstallCheckInputs = [ versionCheckHook ];
   versionCheckProgramArg = "--version";
-  preVersionCheck = "version=0.2.1";
+  # The upstream version without our -unstable-DATE suffix.
+  preVersionCheck = "version=${lib.head (lib.splitString "-" finalAttrs.version)}";
 
   passthru = {
     inherit cudaHome cudaRuntimeHome cudaPackages;
