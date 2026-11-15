@@ -110,15 +110,15 @@ buildPythonPackage (finalAttrs: {
   pname = "freetoken";
 
   # Upstream main past v0.2.2 (df11 --online-quant, fp8/int8 KV cache).
-  version = "0.2.2-unstable-2026-11-13";
+  version = "0.2.2-unstable-2026-11-15";
 
   pyproject = true;
 
   src = fetchFromGitHub {
     owner = "FlashML-org";
     repo = "FreeToken";
-    rev = "66190a937ffd0e681588edf46f1b0b812caa1da7";
-    hash = "sha256-K7WrSRZRpYUhN5AF9z5dPLVt7bnCiA6vSsaqu1FmFWA=";
+    rev = "11729f7d7af2b53bb77b862249bb5ef0e043512b";
+    hash = "sha256-jmdDyAojnPAl5yslDUNl4LfP/U3NODgDhMFfC97NM6w=";
   };
 
   build-system = [
